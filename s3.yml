@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Create a S3 Bucket
+
+Resources:    
+#------------------------------------------------------------------------------
+# 
+#------------------------------------------------------------------------------
+  EMRBucket:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/cloudformation-templates-us-east-2/EC2ChooseAMI.template
+      Parameters:
+        InstanceType: t1.micro
+        KeyName: mykey
+
+#------------------------------------------------------------------------------
+# Trigger the Lambda function on stack actions.
+#------------------------------------------------------------------------------
+  SetUpEMRS3:
+    Type: "Custom::S3Objects"
+    Properties:
+      ServiceToken: !GetAtt PrepEMRS3Bucket.Arn
+      TargetBucket: !Ref EMRClusterBucket
+
+#------------------------------------------------------------------------------
+# Role to allow Lambda function to populate the bucket on creation or tidy 
+# up on removal.
+#------------------------------------------------------------------------------
+  EMRS3WorkSpaceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        -
+          PolicyName: S3Access
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Sid: AllowLogging
+                Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+              -
+                Sid: WriteToEMRBucket
+                Effect: Allow
+                Action:
+                  - "s3:ListBucket"
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:PutObjectAcl"
+                  - "s3:PutObjectVersionAcl"
+                  - "s3:DeleteObject"
+                  - "s3:DeleteObjectVersion"
+                  - "s3:CopyObject"
+                Resource:
+                  - !Sub "arn:aws:s3:::${EMRClusterBucket}"
+                  - !Sub "arn:aws:s3:::${EMRClusterBucket}/*"
+
+#------------------------------------------------------------------------------
+# Lambda to setup inital state of the S3 bucket to clear it down ready for 
+# termination.
+#------------------------------------------------------------------------------
+  PrepEMRS3Bucket:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Initialises EMR Cluster Bucket
+      Handler: index.handler
+      Runtime: python3.9
+      Role: !GetAtt  EMRS3WorkSpaceRole.Arn
+      Timeout: 120
+      Code:
+        ZipFile: |
+          import os
+          import json
+          import cfnresponse
+          import boto3
+          import logging
+
+          from botocore.exceptions import ClientError
+          s3 = boto3.client('s3')
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          folders = ['logs/','input/','output/']
+
+          def handler(event, context):
+            logger.info("Received event: %s" % json.dumps(event))
+            target_bucket = event['ResourceProperties']['TargetBucket']
+
+            result = cfnresponse.SUCCESS
+
+            try:
+              if event['RequestType'] == 'Create' or event['RequestType'] == 'Update':
+                result = create_objects(target_bucket, folders)
+              elif event['RequestType'] == 'Delete':
+                result = delete_objects(target_bucket)
+            except ClientError as e:
+              logger.error('Error: %s', e)
+              result = cfnresponse.FAILED
+
+            cfnresponse.send(event, context, result, {})
+
+          def create_objects(source_bucket, folders):
+            for folder in folders:
+              s3.put_object(Body='setup',Bucket=source_bucket,Key=folder)
+            return cfnresponse.SUCCESS
+
+          def delete_objects(bucket):
+            paginator = s3.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=bucket)
+            objects = [{'Key': x['Key']} for page in page_iterator for x in page['Contents']]
+            s3.delete_objects(Bucket=bucket, Delete={'Objects': objects})
+            return cfnresponse.SUCCESS

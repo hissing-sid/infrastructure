@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Deploys a demo VPC with Public/Private Subnets, IGW and NatGW 
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Environment Setup
+      Parameters:
+      - pVpcCIDR
+      - pEnableFlowLogs
+      
+    ParameterLabels:
+      pVpcCIDR:
+        default: CIDR to apply to the VPC
+      pEnableFlowLogs:
+        default: Enable VPC Flow Logs
+
+Parameters:
+
+  pVpcCIDR:
+    Type: String
+    Description: CIDR to apply to the VPC
+    Default: 10.1.0.0/20
+  pEnableFlowLogs:
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    Default: false
+
+Conditions:
+  EnableFlowLogs: !Equals
+    - !Ref pEnableFlowLogs
+    - true
+
+Resources:
+
+#------------------------------------------------------------------------------
+# Create VPC 
+#------------------------------------------------------------------------------
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref pVpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-VPC'
+
+#------------------------------------------------------------------------------
+# Intenet Gateway
+#------------------------------------------------------------------------------
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-IGW'
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref 'InternetGateway'
+      VpcId: !Ref 'VPC'
+
+
+#------------------------------------------------------------------------------
+# Create Public Subnets
+#------------------------------------------------------------------------------
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, Fn::GetAZs: !Ref 'AWS::Region']
+      VpcId:
+        Ref: VPC
+      CidrBlock: !Select [ 0, !Cidr [ !Ref pVpcCIDR, 2, 8 ] ]
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-PubSn'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-PubSn-rt'
+
+  PublicIgwRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'InternetGateway'
+      RouteTableId: !Ref 'PublicRouteTable'
+
+  PublivSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      SubnetId: !Ref 'PublicSubnet'
+
+#------------------------------------------------------------------------------
+# Create Private Subnets
+#------------------------------------------------------------------------------
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, Fn::GetAZs: !Ref 'AWS::Region']
+      VpcId:
+        Ref: VPC
+      CidrBlock: !Select [ 1, !Cidr [ !Ref pVpcCIDR, 2, 8 ] ]
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-PrivSn'
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    DependsOn: NatGateway
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-PrivSn-rt'
+
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref 'PrivateRouteTable'
+      SubnetId: !Ref 'PrivateSubnet'
+
+
+#------------------------------------------------------------------------------
+# NAT Gateway
+#------------------------------------------------------------------------------
+
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-NATgw-EIP'
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref 'PublicSubnet'
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-NATgw'
+
+  PrivateNATgwRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref 'NatGateway'
+      RouteTableId: !Ref 'PrivateRouteTable'
+
+#------------------------------------------------------------------------------
+# Enable VPC FlowLogs
+#------------------------------------------------------------------------------
+
+  VPCFlowLogRole:
+    Type: AWS::IAM::Role
+    Condition: EnableFlowLogs
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        -
+          PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: "*"
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-VPC-FlowLogRole'
+
+  VPCFlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableFlowLogs
+    Properties:
+      RetentionInDays: 1
+
+  VPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    Condition: EnableFlowLogs
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt VPCFlowLogRole.Arn
+      LogGroupName: !Ref VPCFlowLogGroup
+      ResourceId: !Ref VPC
+      ResourceType: VPC
+      TrafficType: ALL
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}-VPC-Flow-Log'
+
+       
+#------------------------------------------------------------------------------
+# Exported variables
+#------------------------------------------------------------------------------
+
+Outputs:
+  vpcID:
+    Description: Infrastructure VPC id
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-InfraVpcID'
+  PublicSubnet:
+    Description: Infrastructure Public Subnet id
+    Value: !Ref PublicSubnet
+    Export:
+      Name: !Sub '${AWS::StackName}-InfraPublicSnID'
+  PrivateSubnet:
+    Description: Infrastructure Private Subnet id
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: !Sub '${AWS::StackName}-InfraPrivateSnID'

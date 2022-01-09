@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Deploys secure demo environment with a running MyApp server 
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Environment Setup
+      Parameters:
+      - pInfraStack
+      - pLatestAmiId
+      - pDesiredSize
+      
+    ParameterLabels:
+      pInfraStack:
+        default: Infra stack name
+      pLatestAmiId:
+        default: Latest AMI ID
+      pDesiredSize:
+        default: Number of Instances in ASG
+
+Parameters:
+
+  pInfraStack:
+    Type: String
+    Description: Stack name for Infrastructure
+    Default: infra
+  pLatestAmiId:
+    Description: AMI for Instances (default is latest AmaLinux2)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  pDesiredSize:
+    Type: Number
+    Description: Number of active instances
+    Default: 1
+    MinValue: 0
+    MaxValue: 100
+
+
+Resources:
+
+#------------------------------------------------------------------------------
+# Instance profile
+#------------------------------------------------------------------------------
+  EC2InstanceProfile: 
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: !Sub '${AWS::StackName}-InstanceProfile'
+      Path: /
+      Roles: 
+        - !Ref EC2InstanceProfileRole
+      
+  EC2InstanceProfileRole: 
+    Type: AWS::IAM::Role
+    Properties: 
+      RoleName: !Sub '${AWS::StackName}-InstanceProfileRole'
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - 
+            Effect: Allow
+            Principal: 
+              Service: 
+                - ec2.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+#------------------------------------------------------------------------------
+# Scaling Group Specifics
+#------------------------------------------------------------------------------
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${AWS::StackName}-LaunchTemplate'
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt
+            - EC2InstanceProfile
+            - Arn
+        ImageId: !Ref pLatestAmiId
+        InstanceType: t3a.micro
+        InstanceMarketOptions:
+          MarketType: spot
+
+  ASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub '${AWS::StackName}-ASG'
+      MinSize: "0"
+      MaxSize: "100"
+      DesiredCapacity: !Ref pDesiredSize
+      HealthCheckGracePeriod: 300
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier:
+        - subnet-07680cd5eb45a7510
+        #- Fn::ImportValue: 
+        #    !Sub "${pInfraStack}-InfraPrivateSnID"
+      MetricsCollection: 
+        - Granularity: "1Minute"
+          Metrics: 
+            - "GroupMinSize"
+            - "GroupMaxSize"
+      Tags:
+        - Key: Environment
+          Value: Production
+          PropagateAtLaunch: "true"
+        - Key: Purpose
+          Value: WebServerGroup
+          PropagateAtLaunch: "false"
+

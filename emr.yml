@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Deploys EMR cluster into existing VPC 
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: Environment Setup
+      Parameters:
+      - pInfraStack
+    - Label:
+        default: Elastic Map Reduce Setup
+      Parameters:
+      - InstanceType
+      
+    ParameterLabels:
+      pInfraStack:
+        default: Infra stack name
+
+
+Parameters:
+
+  pInfraStack:
+    Type: String
+
+  InstanceType:
+    Type: String
+    Default: c4.large
+
+  ReleaseLabel:
+    Type: String
+
+  TerminationProtected:
+    Type: String
+    Default: 'false'
+
+  ElasticMapReducePrincipal:
+    Type: String
+
+  Ec2Principal:
+    Type: String
+
+
+#------------------------------------------------------------------------------
+# Possible EMR Parameters
+# Ref: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-elasticmapreduce-cluster.html
+#------------------------------------------------------------------------------
+#  AdditionalInfo: Json
+#  Applications: 
+#    - Application
+#  AutoScalingRole: String
+#  BootstrapActions: 
+#    - BootstrapActionConfig
+#  Configurations: 
+#    - Configuration
+#  CustomAmiId: String
+#  EbsRootVolumeSize: Integer
+#  Instances: 
+#    JobFlowInstancesConfig
+#  JobFlowRole: String
+#  KerberosAttributes: 
+#    KerberosAttributes
+#  LogEncryptionKmsKeyId: String
+#  LogUri: String
+#  ManagedScalingPolicy: 
+#    ManagedScalingPolicy
+#  Name: String
+#  ReleaseLabel: String
+#  ScaleDownBehavior: String
+#  SecurityConfiguration: String
+#  ServiceRole: String
+#  StepConcurrencyLevel: Integer
+#  Steps: 
+#    - StepConfig
+#  Tags: 
+#    - Tag
+#  VisibleToAllUsers: Boolean
+       
+#------------------------------------------------------------------------------
+# 
+#------------------------------------------------------------------------------
+
+Resources:
+
+      
+#------------------------------------------------------------------------------
+# 
+#------------------------------------------------------------------------------
+  EMRClusterBucket:
+    Type: AWS::S3::Bucket
+
+
+      
+#------------------------------------------------------------------------------
+# 
+#------------------------------------------------------------------------------
+  cluster:
+    Type: AWS::EMR::Cluster
+    Properties:
+      CustomAmiId: !Ref CustomAmiId
+
+      Instances:
+        MasterInstanceGroup:
+          InstanceCount: 1
+          InstanceType: !Ref InstanceType
+          Market: ON_DEMAND
+          Name: cfnMaster
+
+        CoreInstanceGroup:
+          InstanceCount: 1
+          InstanceType: !Ref InstanceType
+          Market: ON_DEMAND
+          Name: cfnCore
+
+        TerminationProtected: !Ref TerminationProtected
+        Ec2SubnetId:  
+          Fn::ImportValue: 
+            !Sub "${pInfraStack}-InfraPrivateSnID"
+
+      Name: CFNtest
+
+      JobFlowRole: !Ref emrEc2InstanceProfile
+      ServiceRole: !Ref emrRole
+      ReleaseLabel: !Ref ReleaseLabel
+      VisibleToAllUsers: true
+       
+#------------------------------------------------------------------------------
+# 
+#------------------------------------------------------------------------------
+
+  emrRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2008-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: !Ref ElasticMapReducePrincipal
+            Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceRole'
+       
+#------------------------------------------------------------------------------
+# 
+#------------------------------------------------------------------------------
+
+  emrEc2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2008-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: !Ref Ec2Principal
+            Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceforEC2Role'
+
+       
+#------------------------------------------------------------------------------
+# 
+#------------------------------------------------------------------------------
+
+  emrEc2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref emrEc2Role
