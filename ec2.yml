@@ -110,7 +110,5 @@ Resources:
         - Key: Environment
           Value: Production
           PropagateAtLaunch: "true"
-        - Key: Purpose
-          Value: WebServerGroup
-          PropagateAtLaunch: "false"
+
 
