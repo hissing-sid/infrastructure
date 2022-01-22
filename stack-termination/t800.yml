@@ -1,6 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
-Description: Schedule automatic deletion of CloudFormation stacks. (qs-1s7darhsn)
+Description: Schedule automatic deletion of CloudFormation stacks. 
+
+# Based on: https://aws.amazon.com/blogs/infrastructure-and-automation/scheduling-automatic-deletion-of-aws-cloudformation-stacks/
+# Permissions did for work out of the box so have modified DeleteCFNLambdaExecutionRole 
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -12,9 +15,10 @@ Metadata:
           - TTL
     ParameterLabels:
       StackName:
-        default: Stack name
+        default: Stack name that will be deleted.
       TTL:
-        default: Time-to-live
+        default: Time-to-live in minutes for the stack.
+
 Parameters:
   StackName:
     Type: String
@@ -24,39 +28,17 @@ Parameters:
     Description: Time-to-live in minutes for the stack.
 
 Resources:
-  DeleteCFNLambdaExecutionRole:
-    Type: "AWS::IAM::Role"
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-        - Effect: "Allow"
-          Principal:
-            Service: ["lambda.amazonaws.com"]
-          Action: "sts:AssumeRole"
-      Path: "/"
-      Policies:
-      - PolicyName: "lambda_policy"
-        PolicyDocument:
-          Version: "2012-10-17"
-          Statement:
-          - Effect: "Allow"
-            Action:
-            - "logs:CreateLogGroup"
-            - "logs:CreateLogStream"
-            - "logs:PutLogEvents"
-            Resource: "arn:aws:logs:*:*:*"
-          - Effect: "Allow"
-            Action:
-            - "cloudformation:DeleteStack"
-            Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${StackName}/*"
+#------------------------------------------------------------------------------
+# Lambda Function to delete the stack
+# Note the role it depends upon and the required permissions
+#------------------------------------------------------------------------------
 
   DeleteCFNLambda:
     Type: "AWS::Lambda::Function"
     DependsOn:
       - DeleteCFNLambdaExecutionRole
     Properties:
-      FunctionName: !Sub "DeleteCFNLambda-${StackName}"
+      FunctionName: !Sub "${StackName}-DeleteCFNLambda"
       Code:
         ZipFile: |
           import boto3
@@ -82,35 +64,90 @@ Resources:
         Variables:
           stackName: !Ref 'StackName'
       Handler: "index.handler"
-      Runtime: "python3.6"
+      Runtime: "python3.9"
       Timeout: "5"
       Role: !GetAtt DeleteCFNLambdaExecutionRole.Arn
-  
-  DeleteStackEventRule:
-     DependsOn:
-       - DeleteCFNLambda
-       - GenerateCronExpression
-     Type: "AWS::Events::Rule"
-     Properties:
-       Description: Delete stack event
-       ScheduleExpression: !GetAtt GenerateCronExpression.cron_exp
-       State: "ENABLED"
-       Targets: 
-          - 
-            Arn: !GetAtt DeleteCFNLambda.Arn
-            Id: 'DeleteCFNLambda' 
-  
-  PermissionForDeleteCFNLambda: 
-    Type: "AWS::Lambda::Permission"
-    Properties: 
-      FunctionName: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:DeleteCFNLambda-${StackName}"
-      Action: "lambda:InvokeFunction"
-      Principal: "events.amazonaws.com"
-      SourceArn: !GetAtt DeleteStackEventRule.Arn
-  
-  BasicLambdaExecutionRole:
+
+
+  DeleteCFNLambdaExecutionRole:
     Type: "AWS::IAM::Role"
     Properties:
+      RoleName: !Sub "${StackName}-DeleteCFNLambdaExecutionRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Principal:
+            Service: ["lambda.amazonaws.com"]
+          Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+      - PolicyName: "lambda_policy"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          -  
+            Sid: CloudWatchPermissions
+            Effect: "Allow"
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: "arn:aws:logs:*:*:*"
+          -  
+            Sid: CloudFormationPermissions
+            Effect: "Allow"
+            Action:
+              - cloudformation:DeleteStack
+            Resource: 
+              - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${StackName}/*"
+          # The following were missing from the example
+          -  
+            Sid: IAMPermissions
+            Effect: "Allow"
+            Action:
+              - iam:DeleteRolePolicy
+              - iam:DeleteRole
+            Resource: 
+              - !Sub "arn:aws:iam::${AWS::AccountId}:role/${StackName}-DeleteCFNLambda"
+              - !Sub "arn:aws:iam::${AWS::AccountId}:role/${StackName}-DeleteCFNLambdaExecutionRole"
+              - !Sub "arn:aws:iam::${AWS::AccountId}:role/${StackName}-GenerateCronExpLambdaRole"
+          - 
+            Sid: LamdaPermissions
+            Effect: "Allow"
+            Action:
+              - lambda:DeleteFunction
+              - lambda:InvokeFunction
+              - lambda:RemovePermission
+            Resource: 
+              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-GenerateCronExpLambda"
+              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-DeleteCFNLambda"
+              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-GenerateCronExpLambda"
+          -  
+            Sid: EventsPermissions
+            Effect: "Allow"
+            Action: 
+              - events:RemoveTargets
+              - events:DeleteRule
+            Resource: 
+             - !Sub  "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/${StackName}-DeleteStackEventRule"
+
+
+#------------------------------------------------------------------------------
+# Generate cron expression and then setup Lambda to trigger delete 
+# when the event fires
+#------------------------------------------------------------------------------
+  GenerateCronExpression:
+    Type: "Custom::GenerateCronExpression"
+    Version: "1.0"
+    Properties:
+      ServiceToken: !GetAtt GenerateCronExpLambda.Arn
+      ttl: !Ref 'TTL'
+
+  GenerateCronExpLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "${StackName}-GenerateCronExpLambdaRole"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -126,14 +163,15 @@ Resources:
           Statement:
           - Effect: "Allow"
             Action:
-            - "logs:CreateLogGroup"
-            - "logs:CreateLogStream"
-            - "logs:PutLogEvents"
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
             Resource: "arn:aws:logs:*:*:*"
-  
+
   GenerateCronExpLambda:
     Type: "AWS::Lambda::Function"
     Properties:
+      FunctionName: !Sub "${StackName}-GenerateCronExpLambda"
       Code:
         ZipFile: |
           from datetime import datetime, timedelta
@@ -171,11 +209,27 @@ Resources:
       Handler: "index.handler"
       Runtime: "python3.6"
       Timeout: "5"
-      Role: !GetAtt BasicLambdaExecutionRole.Arn
+      Role: !GetAtt GenerateCronExpLambdaRole.Arn
 
-  GenerateCronExpression:
-    Type: "Custom::GenerateCronExpression"
-    Version: "1.0"
+  DeleteStackEventRule:
+    DependsOn:
+      - DeleteCFNLambda
+      - GenerateCronExpression
+    Type: "AWS::Events::Rule"
     Properties:
-      ServiceToken: !GetAtt GenerateCronExpLambda.Arn
-      ttl: !Ref 'TTL'
+      Name: !Sub "${StackName}-DeleteStackEventRule"
+      Description: Delete stack event
+      ScheduleExpression: !GetAtt GenerateCronExpression.cron_exp
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: !GetAtt DeleteCFNLambda.Arn
+          Id: 'DeleteCFNLambda' 
+
+  PermissionForDeleteCFNLambda: 
+    Type: "AWS::Lambda::Permission"
+    Properties: 
+      FunctionName: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-DeleteCFNLambda"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt DeleteStackEventRule.Arn

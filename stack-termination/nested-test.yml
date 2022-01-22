@@ -1,0 +1,8 @@
+Resources:
+  T800:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://sidford-cf-training.s3.eu-west-2.amazonaws.com/t800.yml
+      Parameters:
+        StackName: !Ref 'AWS::StackName'
+        TTL: '5'
