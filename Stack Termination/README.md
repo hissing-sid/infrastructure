@@ -1,12 +1,8 @@
 ## Table of contents
 * [General info](#general-info)
-* [Technologies](#technologies)
 * [Setup](#setup)
 
 ## General info
-This project is simple Lorem ipsum dolor generator.
-	
-## Technologies
 
 This is reusing the code publshed at https://aws.amazon.com/blogs/infrastructure-and-automation/scheduling-automatic-deletion-of-aws-cloudformation-stacks/.
 
@@ -19,7 +15,7 @@ Deploy t800.yaml and in the parameters give it the name of the stack you are dep
 
 TTL neede to be greater than 1 minute due to the time lag in deploying the stack.
 
-The Second option is a an embeded stack, the StackName need to the the parent stack.
+The Second option is a an embeded stack, the StackName need to the the parent stack
 
 ```
 Resources:
