@@ -124,7 +124,6 @@ Resources:
             Resource: 
               - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-GenerateCronExpLambda"
               - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-DeleteCFNLambda"
-              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-GenerateCronExpLambda"
           -  
             Sid: EventsPermissions
             Effect: "Allow"
