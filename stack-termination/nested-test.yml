@@ -1,3 +1,10 @@
+Parameters:
+    Description: Stack name that will be deleted.
+  TTL:
+    Type: Number
+    Description: Time-to-live in minutes for the stack.
+
+
 Resources:
   T800:
     Type: AWS::CloudFormation::Stack
@@ -5,4 +12,4 @@ Resources:
       TemplateURL: https://sidford-cf-training.s3.eu-west-2.amazonaws.com/t800.yml
       Parameters:
         StackName: !Ref 'AWS::StackName'
-        TTL: '5'
+        TTL: !Ref 'TTL'
