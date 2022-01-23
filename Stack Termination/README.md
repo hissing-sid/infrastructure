@@ -6,7 +6,7 @@
 
 This is reusing the code publshed at https://aws.amazon.com/blogs/infrastructure-and-automation/scheduling-automatic-deletion-of-aws-cloudformation-stacks/.
 
-There were a number of permissions for the fopr full termination of the resoruces in the t800.yaml template were missing so these have been retified and this is now working.
+There were a number of permissions needing adding for the for full termination of the resoruces in the t800.yaml template were missing so these have been retified and this is now working.
 	
 ## Setup
 There are two options to run this.
