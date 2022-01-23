@@ -26,6 +26,8 @@ Parameters:
   TTL:
     Type: Number
     Description: Time-to-live in minutes for the stack.
+    Default: 2
+    MinValue: 2
 
 Resources:
 #------------------------------------------------------------------------------

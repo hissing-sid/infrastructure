@@ -1,9 +1,13 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Test for nested stack termination
+
 Parameters:
-    Description: Stack name that will be deleted.
   TTL:
     Type: Number
     Description: Time-to-live in minutes for the stack.
-
+    Default: 2
+    MinValue: 2
 
 Resources:
   T800:
